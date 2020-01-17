@@ -2,6 +2,10 @@ import requests, xlwt, time, sys
 from lxml import etree
 from threading import Thread
 from os import path, makedirs
+from selenium import webdriver
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
 
 # http Configuration
 header = {
@@ -71,16 +75,30 @@ class Excel():
 class Worm():
     def __init__(self, excel=None):
         self.excel = excel
+        self.browser = None
         
-    def connect(self, url, data=None, isGet=True, cookie=None):
-        if isGet == True:
+    def connect(self, url, data=None, isGet=True, cookie=None, isEtree=True):
+        if isGet:
             resp = requests.get(url, headers=header, verify=sslVerify)
         else:
             resp = requests.post(url, data, headers=header, cookies=cookie, verify=sslVerify)
         resp.encoding = encoding
-        print(resp.text)
-        html_parse = etree.HTML(resp.text)
-        return html_parse
+        # print(resp.text)
+        body = resp.text
+        if isEtree:
+            body = etree.HTML(body)
+        return body
+    
+    def browser_connect(self, url, timeout=20):
+        if self.browser is None:
+            options = webdriver.ChromeOptions()
+            # options.add_argument('--headless')
+            options.add_argument('--disable-gpu')
+            self.browser = webdriver.Chrome(chrome_options=options)
+            # self.browser.implicitly_wait(20)
+        self.browser.get(url)
+        # WebDriverWait(self.browser, timeout).until(
+        #     EC.visibility_of(self.browser.find_element_by_class_name('_tn5r2q3fc')))
 
     def getFilms(self):
         url_prefix = 'https://www.yugaopian.cn/movlist/__'
@@ -108,18 +126,23 @@ class Worm():
                     cur = cur + 1
 
     def getFilmInfo(self, movie_list=[]):
+        for movie in movie_list:
+            self.getDouban(movie)
+            print('movie:', movie)
+            # for data in data_list:
+            #     if movie['CNName'] in data.text and movie['year'] in data.text:
+            #         db_url = data.attrib['href']
+            #         print(data.text)
+
+    def getDouban(self, movie):
         url_prefix = 'https://search.douban.com/movie/subject_search?search_text='
         url_nextfix = '&cat=1002'
-        for movie in movie_list:
-            url = url_prefix + movie['CNName'] + url_nextfix
-            body = self.connect(url)
-            data_list = body.xpath('//div[@id="wrapper"]//div[@class="_502rz191j"]')
-            print(data_list)
-            for data in data_list:
-                if movie['CNName'] in data.text and movie['year'] in data.text:
-                    db_url = data.attrib['href']
-                    print(data.text)
-            
+        url = url_prefix + movie['CNName'] + url_nextfix
+        self.browser_connect(url)
+        print(self.browser.find_element_by_xpath('//div[@class="root"]'))
+        title = self.browser.find_elements_by_xpath('//div[@class="root"]//div[@class="title"]/a')[0]
+        
+        
 
 
 if __name__ == "__main__":
@@ -128,7 +151,7 @@ if __name__ == "__main__":
     worm = Worm(excel)
     movie = {
         'CNName': '死侍2：我爱我家',
-        'year': '2019',
+        'year': '2018',
         'month': '01',
         'day': '25'
     }
