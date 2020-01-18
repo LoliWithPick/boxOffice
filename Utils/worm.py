@@ -138,8 +138,15 @@ class Worm():
                 url = 'https://maoyan.com' + item.attrib['href']
                 break
         body = self.connect(url, isEtree=False)
-        print(font.downLoadMYFont(body))
-
+        font_dict = font.getFont(body)
+        print(font_dict)
+        for key in font_dict.keys():
+            body.replace(key, font_dict[key])
+        print(body)
+        body = etree.HTML(body)
+        mark_info = body.xpath('//div[@class="movie-index"]//span[@class="stonefont"]/text()')
+        print(mark_info)
+        
         
 
 if __name__ == "__main__":
