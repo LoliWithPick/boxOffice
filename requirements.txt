@@ -1,3 +1,8 @@
 lxml
-PyExecJS
+xlwt
 selenium
+requests
+colorama
+fontTools
+numpy
+matplotlib

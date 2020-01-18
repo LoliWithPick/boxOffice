@@ -1,11 +1,12 @@
-import requests, xlwt, time, sys
+import requests, time, sys, json, font
 from lxml import etree
 from threading import Thread
-from os import path, makedirs
 from selenium import webdriver
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.common.by import By
+# from selenium.webdriver.support import expected_conditions as EC
+# from selenium.webdriver.common.by import By
+from util import cprint
+from excel import Excel
 
 # http Configuration
 header = {
@@ -22,71 +23,23 @@ end_year = 2018
 start_month = 1
 end_month = 12
 
-# save configuration
-filePath = 'D:\CUDA\boxOffice'
-fileName = 'movData'
-excel_header = ['CNName', 'ENName', 'year', 'month', 'day', 
-                'directors', 'writers', 'stars', 'category', 'country', 
-                'language', 'dbMark', 'db1m', 'db2m', 'db3m',
-                'db4m', 'db5m', 'dbNum', 'imdbMark', 'imdbNum',
-                'toMark', 'toNum', 'toFresh', 'toBad','toAMark',
-                'toANum', 'myMark', 'myNum','boxOffice']
-# excel
-class Excel():
-    def __init__(self):
-        self.sheet_index = 0
-        self.now_index = 0
-        self.createExcel()
-
-    def createExcel(self):
-        print('{0} -----创建excel表格-----'.format(time.strftime('%a %b %d %Y %H:%M:%S', time.localtime())))
-        self.book = xlwt.Workbook()
-        self.sheet = self.book.add_sheet('sheet' + str(self.sheet_index))
-        self.sheet_index += 1
-        for index in range(len(excel_header)):
-            self.sheet.write(0, index, excel_header[index])
-
-    def createSheet(self):
-        print('{0} -----创建新表格-----'.format(time.strftime('%a %b %d %Y %H:%M:%S', time.localtime())))
-        self.sheet = self.book.add_sheet('sheet' + str(self.sheet_index))
-        self.sheet_index += 1
-        for index in range(len(excel_header)):
-            self.sheet.write(0, index, excel_header[index])
-
-    def writeSheet(self, movie):
-        if self.now_index > 65500 :
-            self.createSheet()
-            self.now_index = 1
-        for index in range(len(excel_header)):
-            self.sheet.write(self.now_index, index, movie[excel_header[index]])
-        self.now_index += 1
-
-    def saveExcel(self):
-        try:
-            print('{0} -----保存excel表格-----'.format(time.strftime('%a %b %d %Y %H:%M:%S', time.localtime())))
-            if not path.exists(filePath):
-                makedirs(filePath)
-            self.book.save(path.join(filePath, fileName) +'.xls')
-        except Exception as args:
-            print(args)
-            input('数据保存失败!\nPress any key to exit!')
-            sys.exit()
-
 class Worm():
-    def __init__(self, excel=None):
+    def __init__(self, excel:Excel):
         self.excel = excel
         self.browser = None
         
     def connect(self, url, data=None, isGet=True, cookie=None, isEtree=True):
+        cprint('openning ' + url, 'cyan')
         if isGet:
             resp = requests.get(url, headers=header, verify=sslVerify)
         else:
             resp = requests.post(url, data, headers=header, cookies=cookie, verify=sslVerify)
         resp.encoding = encoding
         # print(resp.text)
-        body = resp.text
         if isEtree:
-            body = etree.HTML(body)
+            body = etree.HTML(resp.text)
+        else:
+            body = resp.text
         return body
     
     def browser_connect(self, url, timeout=20):
@@ -124,6 +77,7 @@ class Worm():
                     if not str.isdigit(max_index) or cur == max_index:
                         break
                     cur = cur + 1
+        self.excel.saveExcel()
 
     def getFilmInfo(self, movie_list=[]):
         for movie in movie_list:
@@ -134,27 +88,75 @@ class Worm():
             #         db_url = data.attrib['href']
             #         print(data.text)
 
-    def getDouban(self, movie):
+    def getDouban(self, movie:dict):
         url_prefix = 'https://search.douban.com/movie/subject_search?search_text='
         url_nextfix = '&cat=1002'
         url = url_prefix + movie['CNName'] + url_nextfix
         self.browser_connect(url)
         print(self.browser.find_element_by_xpath('//div[@class="root"]'))
         title = self.browser.find_elements_by_xpath('//div[@class="root"]//div[@class="title"]/a')[0]
-        
-        
+        movie['url'] = title.get_attribute('href')
 
+    def getDBInfo(self, movie:dict):
+        url = movie['url']
+        body = self.connect(url)
+        movie['dbMark'] = body.xpath('//strong[@property="v:average"]/text()')[0]
+        movie['dbNum'] = body.xpath('//span[@property="v:votes"]/text()')[0]
+        rates = body.xpath('//div[@class="ratings-on-weight"]//span[@class="rating_per"]/text()')
+        for i in range(5):
+            movie['db%dm' % (i + 1)] = rates[4 - i]
+        info_list = body.xpath('string(//div[@id="info"])').replace(' ','').split('\n')
+        for info in info_list:
+            if info.startswith('导演'):
+                movie['directors'] = info.split(':')[1]
+            elif info.startswith('编剧'):
+                movie['writers'] = info.split(':')[1]
+            elif info.startswith('主演'):
+                movie['stars'] = info.split(':')[1]
+            elif info.startswith('类型'):
+                movie['category'] = info.split(':')[1]
+            elif info.startswith('制片'):
+                movie['country'] = info.split(':')[1]
+            elif info.startswith('语言'):
+                movie['language'] = info.split(':')[1]
+        imdbUrl = body.xpath('//div[@id="info"]/a[last()]/@href')[0]
+
+    def getImdbInfo(self, movie:dict, url):
+        body = self.connect(url)
+        title = body.xpath('//div[@class="vital"]//div[@class="title_bar_wrapper"]')[0]
+        movie['ENName'] = title.xpath('//div[@class="title_wrapper"]/h1/text()')[0].replace('\xa0','')
+        movie['imdbMark'] = title.xpath('//span[@itemprop="ratingValue"]/text()')[0]
+        movie['imdbNum'] = title.xpath('//span[@itemprop="ratingCount"]/text()')[0].replace(',','')
+
+    def getMYInfo(self, movie:dict):
+        url_prefix = 'https://maoyan.com/query?kw='
+        url = url_prefix + movie['CNName']
+        body = self.connect(url)
+        item_list = body.xpath('//dl[@class="movie-list"]//div[@title]/a')
+        for item in item_list:
+            if item.text.endswith(movie['CNName']):
+                url = 'https://maoyan.com' + item.attrib['href']
+                break
+        body = self.connect(url, isEtree=False)
+        print(font.downLoadMYFont(body))
+
+        
 
 if __name__ == "__main__":
     #excel = Excel()
     excel = None
     worm = Worm(excel)
     movie = {
-        'CNName': '死侍2：我爱我家',
+        'CNName': '死侍',
         'year': '2018',
         'month': '01',
-        'day': '25'
+        'day': '25',
+        'url': 'https://movie.douban.com/subject/25842038/'
     }
-    ml = [movie]
-    worm.getFilmInfo(ml)
+    # ml = [movie]
+    # worm.getFilmInfo(ml)
     # worm.getFilms()
+    # worm.getDBInfo(movie)
+    # worm.getImdbInfo(movie, 'https://www.imdb.com/title/tt3513548/')
+    worm.getMYInfo(movie)
+    print(movie)
