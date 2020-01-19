@@ -1,7 +1,8 @@
 from fontTools.ttLib import TTFont
-from os import path, makedirs, getcwd
+from os import path, makedirs, getcwd, remove
 import re, requests, time
 from util import cprint
+import numpy as np
 
 maoyan_dict = {
         'uniF816': '1',
@@ -49,38 +50,42 @@ def writeFont(font_file):
         f.write(font_file)
 
 def parseFont():
-    cprint('open:\t' + cur_path, 'green')
+    cprint('open:\t' + cur_path, 'cyan')
     cur_font = TTFont(cur_path)
     uni_list = cur_font.getGlyphOrder()[2:]
     cur_axis = getAxis(cur_font)
     font_dict = {}
     for i in range(len(uni_list)):
-        max_count, uni = 0, None
+        min_avg, uni = 99999, None
         for j in range(len(uni_base_list)):
-            count = compare_axis(cur_axis[i], base_axis[j])
-            if count > max_count:
-                max_count = count
+            avg = compare_axis(cur_axis[i], base_axis[j])
+            if avg < min_avg:
+                min_avg = avg
                 uni = uni_base_list[j]
         font_dict['&#x' + uni_list[i][3:].lower() +';'] = maoyan_dict[uni]
+    remove(cur_path)
     return font_dict
 
+# use Euclidean Distance to compare
 def compare_axis(axis1, axis2):
-    length = len(axis1) if len(axis1) < len(axis2) else len(axis2)
-    count = 0
-    for i in range(length):
-        if abs(axis1[i][0] - axis2[i][0]) < 20 and abs(axis1[i][1] - axis2[i][1]) < 20:
-            count += 1
-    return count
+    if len(axis1) < len(axis2):
+        axis1.extend([0,0] for _ in range(len(axis2) - len(axis1)))
+    elif len(axis2) < len(axis1):
+        axis2.extend([0,0] for _ in range(len(axis1) - len(axis2)))
+    axis1 = np.array(axis1)
+    axis2 = np.array(axis2)
+    return np.sqrt(np.sum(np.square(axis1-axis2)))
 
-# def test():
-#     global cur_path
-#     cur_path = 'cache\\1579335848.6232693.woff'
-#     cprint(parseFont(), 'yellow')
+def test():
+    global cur_path
+    cur_path = 'cache\\1579398826.1402967.woff'
+    cprint(parseFont(), 'yellow')
 #     cur_path = 'cache\\1579335941.607262.woff'
 #     cprint(parseFont(), 'yellow')
 #     cur_path = 'cache\\1579336167.706107.woff'
 #     cprint(parseFont(), 'yellow')
 
-# if __name__ == "__main__":
-#     test()
-    
+if __name__ == "__main__":
+    test()
+    # TTFont('cache\\1579398826.1402967.woff').saveXML('b1.xml')
+    # TTFont('font\\maoyan.woff').saveXML('b2.xml')

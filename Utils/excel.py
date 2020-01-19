@@ -33,13 +33,14 @@ class Excel():
         for index in range(len(excel_header)):
             self.sheet.write(0, index, excel_header[index])
 
-    def writeSheet(self, movie):
-        if self.now_index > 65500 :
-            self.createSheet()
-            self.now_index = 1
-        for key in movie.keys():
-            self.sheet.write(self.now_index, excel_header[key], movie[key])
-        self.now_index += 1
+    def writeSheet(self, movie_list):
+        for movie in movie_list:
+            if self.now_index > 65500 :
+                self.createSheet()
+                self.now_index = 1
+            for key in movie.keys():
+                self.sheet.write(self.now_index, excel_header[key], movie[key])
+            self.now_index += 1
 
     def saveExcel(self):
         try:
