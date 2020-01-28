@@ -35,7 +35,10 @@ base_axis = getAxis(base_font)
 base_font = None
 
 def getFont(response):
-    font_url = 'http:' + re.search(r"url\('(.*\.woff)'\)", response).group(1)
+    woff = re.search(r"url\('(.*\.woff)'\)", response)
+    if woff is None:
+        return None
+    font_url = 'http:' + woff.group(1)
     cprint('download:\t' + font_url, 'cyan')
     font_file = requests.get(font_url).content
     writeFont(font_file)
