@@ -6,3 +6,7 @@ colorama
 fontTools
 numpy
 xlrd
+pandas
+seaborn
+matplotlib
+scikit-learn
