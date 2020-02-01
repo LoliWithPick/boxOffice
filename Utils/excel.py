@@ -4,7 +4,7 @@ from util import cprint
 
 # save configuration
 filePath = 'data'
-fileName = 'testData'
+fileName = 'mydata'
 excel_header = {'CNName': 1, 'ENName': 2, 'year': 3, 'month': 4, 'day': 5, 
                 'directors': 6, 'writers': 7, 'stars': 8, 'category': 9, 'country': 10, 
                 'language': 11, 'dbMark': 12, 'db1m': 13, 'db2m': 14, 'db3m': 15,
@@ -12,9 +12,13 @@ excel_header = {'CNName': 1, 'ENName': 2, 'year': 3, 'month': 4, 'day': 5,
                 'myMark': 21, 'myNum': 22, 'boxOffice': 23}
 
 class Excel():
-    def __init__(self):
+    def __init__(self, header=None):
         self.sheet_index = 0
         self.now_index = 1
+        if header is None:
+            self.header = excel_header
+        else:
+            self.header = header
         self.createExcel()
 
     def createExcel(self):
@@ -22,15 +26,15 @@ class Excel():
         self.book = xlwt.Workbook()
         self.sheet = self.book.add_sheet('sheet' + str(self.sheet_index))
         self.sheet_index += 1
-        for key in excel_header.keys():
-            self.sheet.write(0, excel_header[key], key)
+        for key in self.header.keys():
+            self.sheet.write(0, self.header[key], key)
 
     def createSheet(self):
         cprint('{0} -----创建新表格-----'.format(time.strftime('%a %b %d %Y %H:%M:%S', time.localtime())), 'cyan')
         self.sheet = self.book.add_sheet('sheet' + str(self.sheet_index))
         self.sheet_index += 1
-        for key in excel_header.keys():
-            self.sheet.write(0, excel_header[key], key)
+        for key in self.header.keys():
+            self.sheet.write(0, self.header[key], key)
 
     def writeSheet(self, movie_list):
         cprint('{0} -----写入excel表格-----'.format(time.strftime('%a %b %d %Y %H:%M:%S', time.localtime())), 'cyan')
@@ -38,9 +42,9 @@ class Excel():
             if self.now_index > 65500 :
                 self.createSheet()
                 self.now_index = 1
-            for key in excel_header.keys():
+            for key in self.header.keys():
                 if key in movie:
-                    self.sheet.write(self.now_index, excel_header[key], str(movie[key]).strip())
+                    self.sheet.write(self.now_index, self.header[key], str(movie[key]).strip())
             self.now_index += 1
 
     def write(self, col, data):

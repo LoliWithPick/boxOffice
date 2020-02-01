@@ -1,4 +1,4 @@
-import requests, time, sys, json, font, re
+import requests, time, sys, json, font, re, json
 from lxml import etree
 from threading import Thread
 from selenium import webdriver
@@ -6,20 +6,22 @@ from selenium.webdriver.support.ui import WebDriverWait
 # from selenium.webdriver.support import expected_conditions as EC
 # from selenium.webdriver.common.by import By
 from util import cprint
-from excel import Excel
+from excel import Excel, Read
+from datetime import datetime, timedelta
 
 # http Configuration
 header = {
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8,application/signed-exchange;v=b3',
         'accept-encoding': 'gzip',
         'Accept-Language': 'zh-CN,zh;q=0.9',
+        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
         'Cache-Control': 'max-age=0',
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/77.0.3865.120 Safari/537.36'
 }
 sslVerify = True
 encoding = 'utf-8'
-start_year = 2018
-end_year = 2018
+start_year = 2010
+end_year = 2019
 start_month = 6
 end_month = 12
 
@@ -44,8 +46,8 @@ class Worm():
             proxy = {}
             cprint('openning\t{0}'.format(url), 'cyan')
         is_ok = False
-        retry_count = 15
-        while retry_count > 0:
+        retry_count = 20
+        while True:
             try:
                 if isGet:
                     resp = requests.get(url, headers=header, verify=sslVerify, timeout=timeout, proxies=proxy)
@@ -61,6 +63,9 @@ class Worm():
                 else:
                     cprint('reconnect\t' + url, 'yellow')
                 retry_count -= 1
+                if retry_count == 0:
+                    input('continue?')
+                    retry_count = 10
         if is_ok:
             resp.encoding = encoding
             # print(resp.text)
@@ -70,7 +75,7 @@ class Worm():
                 body = resp.text
             return body
         else:
-            cprint('fail to open {0}'.format(url), 'red')
+            cprint('fail to open {0}'.format(url))
             return None
 
     def connect_test(self, url, proxy, timeout=7):
@@ -81,7 +86,7 @@ class Worm():
             try:
                 resp = requests.get(url, headers=header, verify=sslVerify, timeout=timeout, proxies={'https':'https://{}'.format(proxy)})
                 body = etree.HTML(resp.text)
-                item = body.xpath('//meta[@name="description"]')
+                item = body.xpath('//div[@class="global-nav-items"]')
                 if resp.text.find('异常请求') > 0:
                     cprint('IP异常')
                 elif item is None or item == []:
@@ -99,7 +104,7 @@ class Worm():
         if self.browser_TTL == 0 or self.browser is None:
             if self.browser is not None:
                 self.browser.quit()
-                self.browser_TTL = 100
+                self.browser_TTL = 200
                 time.sleep(1)
             options = webdriver.ChromeOptions()
             # options.add_argument('--headless')
@@ -329,8 +334,287 @@ class Worm():
             movie['boxOffice'] = boxOffice
         return False
 
+
+
+    def getEndata(self):
+        global header
+        header['dnt'] = '1'
+        url = 'http://www.endata.com.cn/API/GetData.ashx'
+        form_data = '&MethodName=BoxOffice_GetMovieData_List_Area'
+        resp = self.connect(url, form_data, isGet=False, isEtree=False, useProxy=True)
+        areas = json.loads(resp)['Data']['Table']
+        area_list = []
+        for area in areas:
+            area_list.append(area['id'])
+        print(area_list)
+        form_data = 'areaId= {0} &typeId=0&year= {1} &initial=&pageIndex={2}&pageSize=10&MethodName=BoxOffice_GetMovieData_List'
+        for year in range(start_year, end_year + 1):
+            for area in area_list:
+                page = 1
+                movie_list = []
+                while True:
+                    resp = self.connect(url, form_data.format(area, year, page), isGet=False, isEtree=False, useProxy=True)
+                    data = json.loads(resp)['Data']
+                    box_none = False
+                    for row in data['Table']:
+                        if row['BoxOffice'] is None or row['BoxOffice'] == '' or row['BoxOffice'] == 0:
+                            box_none = True
+                            break
+                        movie = {
+                            'CNName': row['MovieName'],
+                            'ENName': row['MovieEnName'],
+                            'year': row['releaseYear'],
+                            'boxOffice': row['BoxOffice']
+                        }
+                        movie_list.append(movie)
+                    total = data['Table1'][0]['TotalPage']
+                    cprint('curPage:{0}\ttotalPage:{1}\tyear:{2}'.format(page, total, year), 'magenta')
+                    if page >= total or box_none:
+                        break
+                    page += 1
+                self.excel.writeSheet(movie_list)
+
+    def getmaoyan(self, name_list:[], year_list:[]):
+        global header
+        url_prefix = 'https://maoyan.com/query?kw='
+        url_nextfix = '&type=0'
+        for i in range(len(name_list)):
+            name = name_list[i]
+            url = url_prefix + name + url_nextfix
+            header['Referer'] = 'https://maoyan.com'
+            body = self.connect(url, useProxy=True)
+            titile_list = body.xpath('//dl[@class="movie-list"]//div[@title]/a')
+            date_list = body.xpath('//dl[@class="movie-list"]//div[@class="movie-item-pub"]')
+
+            header['Referer'] = 'https://maoyan.com/films'
+            movie_list = []
+            cprint(name, 'green')
+            isFind = False
+            for j in range(len(titile_list)):
+                title = titile_list[j]
+                if title.text == name and date_list[j].text is not None and date_list[j].text.startswith(year_list[i]):
+                    isFind = True
+                    url = 'https://maoyan.com' + title.attrib['href']
+                    resp = None
+                    retry_times = 20
+                    while True:
+                        resp = self.connect(url, isEtree=False, useProxy=True)
+                        font_dict = font.getFont(resp)
+                        if font_dict is None:
+                            cprint('retry get {0} font'.format(name), 'yellow')
+                            if retry_times == 0:
+                                input('continue?')
+                                retry_times = 10
+                        else:
+                            break
+                        retry_times -= 1
+                    cprint(font_dict, 'magenta')
+                    for key in font_dict.keys():
+                        resp = resp.replace(key, font_dict[key])
+                    body = etree.HTML(resp)
+                    movie = {
+                        'CNName': name,
+                        'ENName': '',
+                        'date': body.xpath('//div[@class="banner"]//div[contains(@class, "wrapper")]//li/text()')[-1],
+                        'myMark': '',
+                        'myNum': ''
+                    }
+                    ENName = body.xpath('//div[@class="banner"]//div[contains(@class, "ename")]/text()')
+                    if ENName != []:
+                        movie['ENName'] = ENName[0]
+                    mark_info = body.xpath('//div[@class="movie-index"]/div')
+                    if mark_info is not None and mark_info != []:
+                        mark = mark_info[0].xpath('string(.)').replace(' ', '')
+                        mark = re.sub(r'\n+', '|', mark)[1:-1].split('|')
+                        if len(mark) == 0:
+                            myMark = ''
+                            myNum = ''
+                        elif len(mark) == 1:
+                            myMark = mark[0]
+                            myNum = ''
+                        else:
+                            myMark = mark[0]
+                            myNum = mark[1][:-3]
+                        boxOffice = mark_info[1].xpath('string(.)').replace(' ', '').replace('\n', '')
+                        movie['myMark'] = myMark
+                        movie['myNum'] = myNum
+                    movie_list.append(movie)
+            if not isFind:
+                for j in range(len(titile_list)):
+                    title = titile_list[j]
+                    if date_list[j].text is not None and date_list[j].text.startswith(year_list[i]):
+                        url = 'https://maoyan.com' + title.attrib['href']
+                        resp = None
+                        retry_times = 20
+                        while True:
+                            resp = self.connect(url, isEtree=False, useProxy=True)
+                            font_dict = font.getFont(resp)
+                            if font_dict is None:
+                                cprint('retry get {0} font'.format(name), 'yellow')
+                                if retry_times == 0:
+                                    input('continue?')
+                                    retry_times = 10
+                            else:
+                                break
+                            retry_times -= 1
+                        cprint(font_dict, 'magenta')
+                        for key in font_dict.keys():
+                            resp = resp.replace(key, font_dict[key])
+                        body = etree.HTML(resp)
+                        movie = {
+                            'CNName': name,
+                            'date': body.xpath('//div[@class="banner"]//div[contains(@class, "wrapper")]//li/text()')[-1]
+                        }
+                        ENName = body.xpath('//div[@class="banner"]//div[contains(@class, "ename")]/text()')
+                        if ENName != []:
+                            movie['ENName'] = ENName[0]
+                        mark_info = body.xpath('//div[@class="movie-index"]/div')
+                        if mark_info is not None and mark_info != []:
+                            mark = mark_info[0].xpath('string(.)').replace(' ', '')
+                            mark = re.sub(r'\n+', '|', mark)[1:-1].split('|')
+                            if len(mark) == 0:
+                                myMark = ''
+                                myNum = ''
+                            elif len(mark) == 1:
+                                myMark = mark[0]
+                                myNum = ''
+                            else:
+                                myMark = mark[0]
+                                myNum = mark[1][:-3]
+                            boxOffice = mark_info[1].xpath('string(.)').replace(' ', '').replace('\n', '')
+                            movie['myMark'] = myMark
+                            movie['myNum'] = myNum
+                        movie_list.append(movie)
+            self.excel.writeSheet(movie_list)
+
+    def getdouban(self, name_list:[], year_list:[]):
+        global header
+        url_prefix = 'https://search.douban.com/movie/subject_search?search_text='
+        url_nextfix = '&cat=1002'
+        header['Referer'] = 'https://search.douban.com/movie'
+        for i in range(len(name_list)):
+            name = name_list[i]
+            url = url_prefix + name + url_nextfix
+            movie_list = []
+            cprint(name, 'green')
+            while True:
+                self.browser_connect(url)
+                title_list = self.browser.find_elements_by_xpath('//div[@class="global-nav-items"]')
+                if title_list is None or title_list == []:
+                    self.browser_TTL = 0
+                else:
+                    break
+                
+            title_list = self.browser.find_elements_by_xpath('//div[@class="root"]//div[@class="title"]//a')
+            while title_list is None or title_list == []:
+                self.browser_TTL = 0
+                self.browser_connect(url)
+                title_list = self.browser.find_elements_by_xpath('//div[@class="root"]//div[@class="title"]//a')
+
+            for title in title_list:
+                text = title.text
+                y = int(text[-5:-1])
+                if test.startswith('{} '.format(name)) and y <= year_list[i] and y >= year_list[i] - 6:
+                    url = title.get_attribute('href')
+                    body = self.connect(url, useProxy=True)
+                    movie = {'CNName': body.xpath('//span[@property="v:itemreviewed"]/text()')}
+                    dbMark = body.xpath('//strong[@property="v:average"]/text()')
+                    dbNum = body.xpath('//span[@property="v:votes"]/text()')
+                    movie['dbMark'] = '' if dbMark == [] else dbMark[0]
+                    movie['dbNum'] = '' if dbNum == [] else dbNum[0]
+                    rates = body.xpath('//div[@class="ratings-on-weight"]//span[@class="rating_per"]/text()')
+                    if rates != []:
+                        for i in range(5):
+                            movie['db%dm' % (i + 1)] = rates[4 - i]
+                    info_list = body.xpath('string(//div[@id="info"])').replace(' ','').split('\n')
+                    for info in info_list:
+                        if info.startswith('导演'):
+                            movie['directors'] = info.split(':')[1]
+                        elif info.startswith('编剧'):
+                            movie['writers'] = info.split(':')[1]
+                        elif info.startswith('主演'):
+                            movie['stars'] = info.split(':')[1]
+                        elif info.startswith('类型'):
+                            movie['categorys'] = info.split(':')[1]
+                        elif info.startswith('制片'):
+                            movie['country'] = info.split(':')[1]
+                        elif info.startswith('语言'):
+                            movie['language'] = info.split(':')[1]
+                        elif info.startswith('上映'):
+                            movie['date'] = info.split(':')[1].split(' / ')[0]
+                    interests = body.xpath('//div[@class="subject-others-interests-ft"]/a/text()')
+                    if len(interests) == 2:
+                        movie['want'] = interests[0]
+                        movie['see'] = interests[1]
+                    elif len(interests) == 1:
+                        if interests[0].endswith('看过'):
+                            movie['want'] = interests[0]
+                        else:
+                            movie['see'] = interests[0]
+                    movie_list.append(movie)
+            self.excel.writeSheet(movie_list)
+        
+    # def getBaidu(self, name_list:[], date_list:[]):
+    #     global header
+    #     header['dnt'] = '1'
+    #     header['Cookie'] = ''
+    #     header['Referer'] = 'https://index.baidu.com/v2/main/index.html'
+    #     url = 'https://index.baidu.com/api/SearchApi/index?area=0&word={0}&startDate={1}&endDate={2}'
+    #     for i in range(len(name_list)):
+    #         name = name_list[i]
+    #         endDate = datetime.strptime(date_list[i], '%Y-%m-%d')
+    #         startDate = endDate - timedelta(days=30)
+    #         endDate = datetime.date(endDate)
+    #         startDate = datetime.date(startDate)
+
+    #         resp = self.connect(url.format(name, startDate, endDate), isEtree=False)
+    #         data = json.loads(resp)['Data']
+    #         print(date)
+    #         movie['CNName'] = name
+    #         movie['baidu'] = data['generalRatio'][0]['all']['avg']
+    #         self.excel.writeSheet([movie])
+
+    # def getMtime(self, name_list:[], year_list:[]):
+    #     global header
+    #     referer = 'http://search.mtime.com/search/?q={}'
+    #     search_url = 'http://service.channel.mtime.com/Search.api?Ajax_CallBack=true&Ajax_CallBackType=Mtime.Channel.Services&Ajax_CallBackMethod=GetSearchResult&Ajax_CrossDomain=1&Ajax_RequestUrl={0}&t={1}&Ajax_CallBackArgument0={2}&Ajax_CallBackArgument1=0&Ajax_CallBackArgument2=290&Ajax_CallBackArgument3=0&Ajax_CallBackArgument4=1'
+    #     movie_url = 'http://service.library.mtime.com/Movie.api?Ajax_CallBack=true&Ajax_CallBackType=Mtime.Library.Services&Ajax_CallBackMethod=GetMovieOverviewRating&Ajax_CrossDomain=1&Ajax_RequestUrl={0}&t={1}&Ajax_CallBackArgument0={2}'
+    #     for i in range(len(name_list)):
+    #         name = name_list[i]
+    #         header['Referer'] = referer.format(name)
+    #         t = ''
+    #         resp = self.connect(search_url.format(header['Referer'], t, name), isEtree=False, useProxy=True)
+    #         js_data = '{' + ''.join(resp.split('\n')[1:-1]) + '}'
+    #         search_datas = json.loads(js_data)['value']['movieResult']['moreMovies']
+    #         movie_list = []
+    #         for search_data in search_datas:
+    #             if search_data['movieTitle'].startswith(name) and year_list[i] in search_data['movieTitle']:
+    #                 url = search_data['movieUrl']
+    #                 movieId = url.split('/')[-1]
+    #                 header=['Referer'] = url
+    #                 resp = self.connect(movie_url.format(url, t, movieId), isEtree=False, useProxy=True)
+    #                 js_data = '{' + ''.join(resp.split('\n')[1:-1]) + '}'
+    #                 movie_data = json.loads(js_data)['value']
+    #                 movie = {
+    #                     'CNName': movie_data['movieTitle'],
+    #                     'mtimeMark': movie_data['movieRating']['RatingFinal'],
+    #                     'mtimeNum': movie_data['movieRating']['Usercount'],
+    #                     'mtimeWant': movie_data['movieRating']['AttitudeCount'],
+    #                     'mtimeDMark': movie_data['movieRating']['RDirectorFinal'],
+    #                     'movieId': movieId
+    #                 }
+    #                 movie_list.append(movie)
+    #         self.excel.writeSheet(movie_list)
+
+
 if __name__ == "__main__":
-    excel = Excel()
+    # {'CNName':1, 'mtimeMark':2, 'mtimeNum': 3, 'mtimeWant': 4, 'mtimeDMark': 5, 'movieId': 6}
+    # {'CNName': 1, 'date': 2, 'directors': 3, 'writers': 4, 'stars': 5
+    # , 'categorys': 6, 'country': 7, 'language': 8, 'want': 9, 'see': 10, 'dbMark', 'dbNum'}
+    excel = Excel(header={'CNName': 1, 'ENName': 2, 'date': 3, 'myMark': 4, 'myNum': 5})
+    reader = Read()
+    reader.load('data\\endata.xls')
+    sheet = reader.getSheetById()
     # excel = None
     worm = Worm(excel)
     # movie = {
@@ -343,15 +627,23 @@ if __name__ == "__main__":
     # ml = [movie]
     # worm.getFilmInfo(ml)
     # worm.connect('https://maoyan.com/films/588362', useProxy=True)
-
-    # worm.browser_connect('http://httpbin.org/get')
+    # worm.getEndata()
     try:
-        worm.getFilms(3)
+        worm.getmaoyan(sheet.col_values(1)[457:], sheet.col_values(3)[457:])
     except Exception as args:
         args.with_traceback()
         cprint(args)
     finally:
         excel.saveExcel()
+    # worm.browser_connect('http://httpbin.org/get')
+
+    # try:
+    #     worm.getFilms(3)
+    # except Exception as args:
+    #     args.with_traceback()
+    #     cprint(args)
+    # finally:
+    #     excel.saveExcel()
 
     # worm.getDBInfo(movie)
     # worm.getImdbInfo(movie, 'https://www.imdb.com/title/tt3513548/')
