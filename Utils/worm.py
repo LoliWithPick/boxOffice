@@ -8,6 +8,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from util import cprint
 from excel import Excel, Read
 from datetime import datetime, timedelta
+from urllib import parse
 
 # http Configuration
 header = {
@@ -40,7 +41,7 @@ class Worm():
         
     def connect(self, url, data=None, isGet=True, cookie=None, isEtree=True, timeout=3, useProxy=False):
         if useProxy:
-            proxy = {'https': "https://{}".format(get_proxy().get("proxy"))}
+            proxy = {'https': "https://{}".format(get_proxy().get("proxy")), 'http': "http://{}".format(get_proxy().get("proxy"))}
             cprint('use proxy: {0}, openning\t{1}'.format(proxy['https'], url), 'cyan')
         else:
             proxy = {}
@@ -57,8 +58,8 @@ class Worm():
                 break
             except requests.exceptions.RequestException:
                 if useProxy:
-                    delete_proxy(proxy['https'])
-                    proxy = {'https': "https://{}".format(get_proxy().get("proxy"))}
+                    # delete_proxy(proxy['https'][8:])
+                    proxy = {'https': "https://{}".format(get_proxy().get("proxy")), 'http': "http://{}".format(get_proxy().get("proxy"))}
                     cprint('use proxy: {0}, reconnect\t{1}'.format(proxy['https'], url), 'yellow')
                 else:
                     cprint('reconnect\t' + url, 'yellow')
@@ -185,7 +186,7 @@ class Worm():
             self.getDouban(movie)
             self.getDBInfo(movie)
             if ('category' in movie and '电视' in movie['category']) or self.getMYInfo(movie):
-                move_list.remove(movie)
+                movie_list.remove(movie)
             cprint(movie, 'magenta')
             print()
             # time.sleep(0.5)
@@ -574,44 +575,58 @@ class Worm():
     #         movie['baidu'] = data['generalRatio'][0]['all']['avg']
     #         self.excel.writeSheet([movie])
 
-    # def getMtime(self, name_list:[], year_list:[]):
-    #     global header
-    #     referer = 'http://search.mtime.com/search/?q={}'
-    #     search_url = 'http://service.channel.mtime.com/Search.api?Ajax_CallBack=true&Ajax_CallBackType=Mtime.Channel.Services&Ajax_CallBackMethod=GetSearchResult&Ajax_CrossDomain=1&Ajax_RequestUrl={0}&t={1}&Ajax_CallBackArgument0={2}&Ajax_CallBackArgument1=0&Ajax_CallBackArgument2=290&Ajax_CallBackArgument3=0&Ajax_CallBackArgument4=1'
-    #     movie_url = 'http://service.library.mtime.com/Movie.api?Ajax_CallBack=true&Ajax_CallBackType=Mtime.Library.Services&Ajax_CallBackMethod=GetMovieOverviewRating&Ajax_CrossDomain=1&Ajax_RequestUrl={0}&t={1}&Ajax_CallBackArgument0={2}'
-    #     for i in range(len(name_list)):
-    #         name = name_list[i]
-    #         header['Referer'] = referer.format(name)
-    #         t = ''
-    #         resp = self.connect(search_url.format(header['Referer'], t, name), isEtree=False, useProxy=True)
-    #         js_data = '{' + ''.join(resp.split('\n')[1:-1]) + '}'
-    #         search_datas = json.loads(js_data)['value']['movieResult']['moreMovies']
-    #         movie_list = []
-    #         for search_data in search_datas:
-    #             if search_data['movieTitle'].startswith(name) and year_list[i] in search_data['movieTitle']:
-    #                 url = search_data['movieUrl']
-    #                 movieId = url.split('/')[-1]
-    #                 header=['Referer'] = url
-    #                 resp = self.connect(movie_url.format(url, t, movieId), isEtree=False, useProxy=True)
-    #                 js_data = '{' + ''.join(resp.split('\n')[1:-1]) + '}'
-    #                 movie_data = json.loads(js_data)['value']
-    #                 movie = {
-    #                     'CNName': movie_data['movieTitle'],
-    #                     'mtimeMark': movie_data['movieRating']['RatingFinal'],
-    #                     'mtimeNum': movie_data['movieRating']['Usercount'],
-    #                     'mtimeWant': movie_data['movieRating']['AttitudeCount'],
-    #                     'mtimeDMark': movie_data['movieRating']['RDirectorFinal'],
-    #                     'movieId': movieId
-    #                 }
-    #                 movie_list.append(movie)
-    #         self.excel.writeSheet(movie_list)
+    def getMtime(self, name_list:[], year_list:[]):
+        global header
+        referer = 'http://search.mtime.com/search/?q={}'
+        search_url = 'http://service.channel.mtime.com/Search.api?Ajax_CallBack=true&Ajax_CallBackType=Mtime.Channel.Services&Ajax_CallBackMethod=GetSearchResult&Ajax_CrossDomain=1&Ajax_RequestUrl={0}&t={1}&Ajax_CallBackArgument0={2}&Ajax_CallBackArgument1=0&Ajax_CallBackArgument2=290&Ajax_CallBackArgument3=0&Ajax_CallBackArgument4=1'
+        movie_url = 'http://service.library.mtime.com/Movie.api?Ajax_CallBack=true&Ajax_CallBackType=Mtime.Library.Services&Ajax_CallBackMethod=GetMovieOverviewRating&Ajax_CrossDomain=1&Ajax_RequestUrl={0}&t={1}&Ajax_CallBackArgument0={2}'
+        for i in range(len(name_list)):
+            name = name_list[i]
+            header['Referer'] = referer.format(parse.quote(name))
+            t = time.strftime('%Y%m%d%H%M%S0000', time.localtime())
+            while True:
+                resp = self.connect(search_url.format(header['Referer'], t, name), isEtree=False, useProxy=True)
+                try:
+                    js_data = re.search(r'= (.*?});', resp).group(1)
+                    break
+                except Exception:
+                    cprint('Invalid. Retry')
+            search_datas = json.loads(js_data)['value']
+            if 'movieResult' in search_datas and 'moreMovies' in search_datas['movieResult']:
+                search_datas = search_datas['movieResult']['moreMovies']
+            else:
+                continue
+            movie_list = []
+            for search_data in search_datas:
+                if search_data['movieTitle'].startswith('{} '.format(name)):
+                    try:
+                        y = int(search_data['movieTitle'][-5:-1])
+                    except:
+                        continue
+                    if y <= int(year_list[i]) and y >= int(year_list[i]) - 3:
+                        url = search_data['movieUrl']
+                        movieId = url.split('/')[-2]
+                        header['Referer'] = url
+                        resp = self.connect(movie_url.format(url, t, movieId), isEtree=False, useProxy=True)
+                        js_data = re.search(r'= (.*?});', resp).group(1)
+                        movie_data = json.loads(js_data)['value']
+                        movie = {
+                            'CNName': movie_data['movieTitle'],
+                            'mtimeMark': movie_data['movieRating']['RatingFinal'] if 'movieRating' in movie_data else '',
+                            'mtimeNum': movie_data['movieRating']['Usercount'] if 'movieRating' in movie_data else '',
+                            'mtimeWant': movie_data['movieRating']['AttitudeCount'] if 'movieRating' in movie_data else '',
+                            'movieId': movieId
+                        }
+                        movie_list.append(movie)
+                        cprint(movie, 'magenta')
+            self.excel.writeSheet(movie_list)
 
 
 if __name__ == "__main__":
     # {'CNName':1, 'mtimeMark':2, 'mtimeNum': 3, 'mtimeWant': 4, 'mtimeDMark': 5, 'movieId': 6}
     # {'CNName': 1, 'date': 2, 'directors': 3, 'writers': 4, 'stars': 5
     # , 'categorys': 6, 'country': 7, 'language': 8, 'want': 9, 'see': 10, 'dbMark', 'dbNum'}
-    excel = Excel(header={'CNName': 1, 'ENName': 2, 'date': 3, 'myMark': 4, 'myNum': 5})
+    excel = Excel(header={'CNName':1, 'mtimeMark':2, 'mtimeNum': 3, 'mtimeWant': 4, 'movieId': 5})
     reader = Read()
     reader.load('data\\endata.xls')
     sheet = reader.getSheetById()
@@ -629,7 +644,7 @@ if __name__ == "__main__":
     # worm.connect('https://maoyan.com/films/588362', useProxy=True)
     # worm.getEndata()
     try:
-        worm.getmaoyan(sheet.col_values(1)[457:], sheet.col_values(3)[457:])
+        worm.getMtime(sheet.col_values(1)[127:], sheet.col_values(3)[127:])
     except Exception as args:
         args.with_traceback()
         cprint(args)
