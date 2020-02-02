@@ -1,14 +1,14 @@
-import requests, time, sys, json, font, re, json
+import requests, time, sys, json, font, re, json, proxyPool
 from lxml import etree
 from threading import Thread
 from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 # from selenium.webdriver.support import expected_conditions as EC
 # from selenium.webdriver.common.by import By
 from util import cprint
 from excel import Excel, Read
 from datetime import datetime, timedelta
-from urllib import parse
 
 # http Configuration
 header = {
@@ -38,10 +38,14 @@ class Worm():
         self.excel = excel
         self.browser = None
         self.browser_TTL = 100
+        self.proxy = None
         
-    def connect(self, url, data=None, isGet=True, cookie=None, isEtree=True, timeout=3, useProxy=False):
+    def connect(self, url, data=None, isGet=True, cookie=None, isEtree=True, timeout=5, useProxy=False):
         if useProxy:
-            proxy = {'https': "https://{}".format(get_proxy().get("proxy")), 'http': "http://{}".format(get_proxy().get("proxy"))}
+            if self.proxy is None:        
+                # self.proxy = get_proxy().get("proxy")
+                self.proxy = proxyPool.get_proxy()
+            proxy = {'https': "https://{}".format(self.proxy), 'http': "http://{}".format(self.proxy)}
             cprint('use proxy: {0}, openning\t{1}'.format(proxy['https'], url), 'cyan')
         else:
             proxy = {}
@@ -58,8 +62,9 @@ class Worm():
                 break
             except requests.exceptions.RequestException:
                 if useProxy:
-                    # delete_proxy(proxy['https'][8:])
-                    proxy = {'https': "https://{}".format(get_proxy().get("proxy")), 'http': "http://{}".format(get_proxy().get("proxy"))}
+                    # self.proxy = get_proxy().get("proxy")
+                    self.proxy = proxyPool.get_proxy()
+                    proxy = {'https': "https://{}".format(self.proxy), 'http': "http://{}".format(self.proxy)}
                     cprint('use proxy: {0}, reconnect\t{1}'.format(proxy['https'], url), 'yellow')
                 else:
                     cprint('reconnect\t' + url, 'yellow')
@@ -81,18 +86,18 @@ class Worm():
 
     def connect_test(self, url, proxy, timeout=7):
         cprint('proxy connect test {}'.format(proxy), 'cyan')
-        print(url)
+        cprint(url, 'cyan')
         retry_count = 3
         while retry_count > 0:
             try:
                 resp = requests.get(url, headers=header, verify=sslVerify, timeout=timeout, proxies={'https':'https://{}'.format(proxy)})
                 body = etree.HTML(resp.text)
-                item = body.xpath('//div[@class="global-nav-items"]')
+                # item = body.xpath('//div[@class="global-nav-items"]')
                 if resp.text.find('异常请求') > 0:
                     cprint('IP异常')
-                elif item is None or item == []:
-                    cprint('IP无效')
-                    return False
+                # elif item is None or item == []:
+                #     cprint('IP无效')
+                #     return False
                 else:
                     return True
             except requests.exceptions.RequestException:
@@ -111,23 +116,28 @@ class Worm():
             # options.add_argument('--headless')
             options.add_argument('--disable-gpu')
             while True:
-                proxy = get_proxy().get("proxy")
-                if self.connect_test(url, proxy):
-                    options.add_argument('--proxy-server=http://{}'.format(proxy))
+                # self.proxy = get_proxy().get("proxy")
+                self.proxy = proxyPool.get_proxy()
+                if self.connect_test(url, self.proxy):
+                    options.add_argument('--proxy-server=http://{}'.format(self.proxy))
                     break
             options.add_experimental_option("prefs", {"profile.managed_default_content_settings.images":2})
             self.browser = webdriver.Chrome(chrome_options=options)
-            self.browser.set_page_load_timeout(35)
-            self.browser.set_script_timeout(35)
+            self.browser.set_page_load_timeout(20)
+            self.browser.set_script_timeout(20)
             # self.browser.implicitly_wait(20)
         cprint('use browser openning {}'.format(url), 'cyan')
-        while True:
-            try:
-                self.browser.get(url)
-                self.browser_TTL -= 1
-                break
-            except Exception:
-                cprint('reconnect browser', 'yellow')
+        isOk = True
+        try:
+            self.browser.get(url)
+            self.browser_TTL -= 1
+        except TimeoutException:
+            self.browser_TTL -= 1
+            cprint('timeout', 'yellow')
+        except Exception:
+            isOk = False
+            cprint('browser error')
+        return isOk
         # WebDriverWait(self.browser, timeout).until(
         #     EC.visibility_of(self.browser.find_element_by_class_name('_tn5r2q3fc')))
 
@@ -186,7 +196,7 @@ class Worm():
             self.getDouban(movie)
             self.getDBInfo(movie)
             if ('category' in movie and '电视' in movie['category']) or self.getMYInfo(movie):
-                movie_list.remove(movie)
+                move_list.remove(movie)
             cprint(movie, 'magenta')
             print()
             # time.sleep(0.5)
@@ -335,8 +345,6 @@ class Worm():
             movie['boxOffice'] = boxOffice
         return False
 
-
-
     def getEndata(self):
         global header
         header['dnt'] = '1'
@@ -383,9 +391,28 @@ class Worm():
             name = name_list[i]
             url = url_prefix + name + url_nextfix
             header['Referer'] = 'https://maoyan.com'
-            body = self.connect(url, useProxy=True)
+            while True:
+                body = self.connect(url, useProxy=True)
+                test_info = body.xpath('//div[@class="search-box"]')
+                if test_info is None or test_info == []:
+                    self.proxy = None
+                else:
+                    break
             titile_list = body.xpath('//dl[@class="movie-list"]//div[@title]/a')
             date_list = body.xpath('//dl[@class="movie-list"]//div[@class="movie-item-pub"]')
+
+            # while not self.browser_connect(url):
+            #     self.browser_TTL = 0
+            # while True:
+            #     titile_list = self.browser.find_elements_by_xpath('//dl[@class="movie-list"]//div[@title]/a')
+            #     date_list = self.browser.find_elements_by_xpath('//dl[@class="movie-list"]//div[@class="movie-item-pub"]')
+            #     if titile_list is None or titile_list == []:
+            #         itext = input('chosse 1.keep going\t2.reopen browser')
+            #         if itext == 2:
+            #             self.browser_TTL = 0
+            #             self.browser_connect(url)
+            #     else:
+            #         break
 
             header['Referer'] = 'https://maoyan.com/films'
             movie_list = []
@@ -393,64 +420,96 @@ class Worm():
             isFind = False
             for j in range(len(titile_list)):
                 title = titile_list[j]
-                if title.text == name and date_list[j].text is not None and date_list[j].text.startswith(year_list[i]):
-                    isFind = True
-                    url = 'https://maoyan.com' + title.attrib['href']
-                    resp = None
-                    retry_times = 20
-                    while True:
-                        resp = self.connect(url, isEtree=False, useProxy=True)
-                        font_dict = font.getFont(resp)
-                        if font_dict is None:
-                            cprint('retry get {0} font'.format(name), 'yellow')
-                            if retry_times == 0:
-                                input('continue?')
-                                retry_times = 10
-                        else:
-                            break
-                        retry_times -= 1
-                    cprint(font_dict, 'magenta')
-                    for key in font_dict.keys():
-                        resp = resp.replace(key, font_dict[key])
-                    body = etree.HTML(resp)
-                    movie = {
-                        'CNName': name,
-                        'ENName': '',
-                        'date': body.xpath('//div[@class="banner"]//div[contains(@class, "wrapper")]//li/text()')[-1],
-                        'myMark': '',
-                        'myNum': ''
-                    }
-                    ENName = body.xpath('//div[@class="banner"]//div[contains(@class, "ename")]/text()')
-                    if ENName != []:
-                        movie['ENName'] = ENName[0]
-                    mark_info = body.xpath('//div[@class="movie-index"]/div')
-                    if mark_info is not None and mark_info != []:
-                        mark = mark_info[0].xpath('string(.)').replace(' ', '')
-                        mark = re.sub(r'\n+', '|', mark)[1:-1].split('|')
-                        if len(mark) == 0:
-                            myMark = ''
-                            myNum = ''
-                        elif len(mark) == 1:
-                            myMark = mark[0]
-                            myNum = ''
-                        else:
-                            myMark = mark[0]
-                            myNum = mark[1][:-3]
-                        boxOffice = mark_info[1].xpath('string(.)').replace(' ', '').replace('\n', '')
-                        movie['myMark'] = myMark
-                        movie['myNum'] = myNum
-                    movie_list.append(movie)
+                if title.text == name:
+                    if date_list[j].text is not None:
+                        try:
+                            y = int(date_list[:5])
+                        except:
+                            continue
+                        if y <= int(year_list[i]) and y >= int(year_list[i]) - 3:
+                            isFind = True
+                            url = 'https://maoyan.com' + title.attrib['href']
+                            resp = None
+                            retry_times = 10
+                            while True:
+                                resp = self.connect(url, isEtree=False, useProxy=True)
+                                font_dict = font.getFont(resp)
+                                if font_dict is None:
+                                    self.proxy = None
+                                    cprint('retry get {0} font'.format(name), 'yellow')
+                                    if retry_times == 0:
+                                        input('continue?')
+                                        retry_times = 10
+                                else:
+                                    break
+                                retry_times -= 1
+
+                            # self.browser_connect(url)
+                            # while True:
+                            #     test_info = self.browser.find_elements_by_xpath('//div[@class="search-box"]/div')
+                            #     if test_info is None or test_info == []:
+                            #         itext = input('chosse 1.keep going\t2.reopen browser')
+                            #         print(itext)
+                            #         if itext == '2':
+                            #             self.browser_TTL = 0
+                            #             self.browser_connect(url)
+                            #     else:
+                            #         break
+                            # retry_times = 10
+                            # resp = self.browser.page_source
+                            # while True:
+                            #     font_dict = font.getFont(resp)
+                            #     if font_dict is None:
+                            #         if retry_times == 0:
+                            #             input('continue?')
+                            #             retry_times = 10
+                            #     else:
+                            #         break
+                            #     retry_times -= 1
+
+                            cprint(font_dict, 'magenta')
+                            for key in font_dict.keys():
+                                resp = resp.replace(key, font_dict[key])
+                            body = etree.HTML(resp)
+                            movie = {
+                                'CNName': name,
+                                'ENName': '',
+                                'date': body.xpath('//div[@class="banner"]//div[contains(@class, "wrapper")]//li/text()')[-1],
+                                'myMark': '',
+                                'myNum': ''
+                            }
+                            ENName = body.xpath('//div[@class="banner"]//div[contains(@class, "ename")]/text()')
+                            if ENName != []:
+                                movie['ENName'] = ENName[0]
+                            mark_info = body.xpath('//div[@class="movie-index"]/div')
+                            if mark_info is not None and mark_info != []:
+                                mark = mark_info[0].xpath('string(.)').replace(' ', '')
+                                mark = re.sub(r'\n+', '|', mark)[1:-1].split('|')
+                                if len(mark) == 0:
+                                    myMark = ''
+                                    myNum = ''
+                                elif len(mark) == 1:
+                                    myMark = mark[0]
+                                    myNum = ''
+                                else:
+                                    myMark = mark[0]
+                                    myNum = mark[1][:-3]
+                                boxOffice = mark_info[1].xpath('string(.)').replace(' ', '').replace('\n', '')
+                                movie['myMark'] = myMark
+                                movie['myNum'] = myNum
+                            movie_list.append(movie)
             if not isFind:
                 for j in range(len(titile_list)):
                     title = titile_list[j]
                     if date_list[j].text is not None and date_list[j].text.startswith(year_list[i]):
                         url = 'https://maoyan.com' + title.attrib['href']
                         resp = None
-                        retry_times = 20
+                        retry_times = 10
                         while True:
                             resp = self.connect(url, isEtree=False, useProxy=True)
                             font_dict = font.getFont(resp)
                             if font_dict is None:
+                                self.proxy = None
                                 cprint('retry get {0} font'.format(name), 'yellow')
                                 if retry_times == 0:
                                     input('continue?')
@@ -458,6 +517,29 @@ class Worm():
                             else:
                                 break
                             retry_times -= 1
+
+                        # self.browser_connect(url)
+                        # while True:
+                        #     mark_info = self.browser.find_elements_by_xpath('//div[@class="movie-index"]/div')
+                        #     if mark_info is None or mark_info == []:
+                        #         itext = input('chosse 1.keep going\t2.reopen browser')
+                        #         if itext == '2':
+                        #             self.browser_TTL = 0
+                        #             self.browser_connect(url)
+                        #     else:
+                        #         break
+                        # retry_times = 10
+                        # resp = self.browser.page_source
+                        # while True:
+                        #     font_dict = font.getFont(resp)
+                        #     if font_dict is None:
+                        #         if retry_times == 0:
+                        #             input('continue?')
+                        #             retry_times = 10
+                        #     else:
+                        #         break
+                        #     retry_times -= 1
+
                         cprint(font_dict, 'magenta')
                         for key in font_dict.keys():
                             resp = resp.replace(key, font_dict[key])
@@ -507,11 +589,6 @@ class Worm():
                     break
                 
             title_list = self.browser.find_elements_by_xpath('//div[@class="root"]//div[@class="title"]//a')
-            while title_list is None or title_list == []:
-                self.browser_TTL = 0
-                self.browser_connect(url)
-                title_list = self.browser.find_elements_by_xpath('//div[@class="root"]//div[@class="title"]//a')
-
             for title in title_list:
                 text = title.text
                 y = int(text[-5:-1])
@@ -621,12 +698,11 @@ class Worm():
                         cprint(movie, 'magenta')
             self.excel.writeSheet(movie_list)
 
-
 if __name__ == "__main__":
     # {'CNName':1, 'mtimeMark':2, 'mtimeNum': 3, 'mtimeWant': 4, 'mtimeDMark': 5, 'movieId': 6}
     # {'CNName': 1, 'date': 2, 'directors': 3, 'writers': 4, 'stars': 5
     # , 'categorys': 6, 'country': 7, 'language': 8, 'want': 9, 'see': 10, 'dbMark', 'dbNum'}
-    excel = Excel(header={'CNName':1, 'mtimeMark':2, 'mtimeNum': 3, 'mtimeWant': 4, 'movieId': 5})
+    excel = Excel(header={'CNName': 1, 'ENName': 2, 'date': 3, 'myMark': 4, 'myNum': 5})
     reader = Read()
     reader.load('data\\endata.xls')
     sheet = reader.getSheetById()
@@ -644,7 +720,7 @@ if __name__ == "__main__":
     # worm.connect('https://maoyan.com/films/588362', useProxy=True)
     # worm.getEndata()
     try:
-        worm.getMtime(sheet.col_values(1)[127:], sheet.col_values(3)[127:])
+        worm.getmaoyan(sheet.col_values(1)[1174:], sheet.col_values(3)[1174:])
     except Exception as args:
         args.with_traceback()
         cprint(args)
